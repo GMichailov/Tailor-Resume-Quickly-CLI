@@ -1250,6 +1250,8 @@ def replace_placeholder_in_paragraph(paragraph, placeholder, replacement_text):
     if placeholder not in paragraph.text:
         return False
 
+    replacement_text = replacement_text or ""
+
     if not paragraph.runs:
         paragraph.text = paragraph.text.replace(placeholder, replacement_text)
         return True
@@ -1263,19 +1265,21 @@ def replace_placeholder_in_paragraph(paragraph, placeholder, replacement_text):
     return True
 
 
-def replace_placeholder_in_document(document, placeholder, replacement_text):
+def replace_placeholder_everywhere(document, placeholder, replacement_text):
+    replaced = False
+
     for paragraph in document.paragraphs:
         if replace_placeholder_in_paragraph(paragraph, placeholder, replacement_text):
-            return True
+            replaced = True
 
     for table in document.tables:
         for row in table.rows:
             for cell in row.cells:
                 for paragraph in cell.paragraphs:
                     if replace_placeholder_in_paragraph(paragraph, placeholder, replacement_text):
-                        return True
+                        replaced = True
 
-    return False
+    return replaced
 
 
 def insert_paragraph_after(paragraph, text=None, style=None):
@@ -1291,7 +1295,33 @@ def find_paragraph_index_with_placeholder(document, placeholder):
     return None
 
 
-def clone_repeating_block(document, anchor_placeholder, selected_clusters):
+def format_section_label(placeholder):
+    token = placeholder.removeprefix("[[").removesuffix("]]").strip().lower()
+    return " ".join(part.capitalize() for part in token.split("_"))
+
+
+def build_date_text(start_date, end_date, use_present_for_missing_end=False):
+    start_value = (start_date or "").strip()
+    end_value = (end_date or "").strip()
+
+    if not end_value and use_present_for_missing_end:
+        end_value = "present"
+
+    if start_value and end_value:
+        return f"{start_value} - {end_value}"
+    if start_value:
+        return start_value
+    if end_value:
+        return end_value
+    return ""
+
+
+def apply_date_placeholder_paragraph(paragraph, start_date, end_date, use_present_for_missing_end=False):
+    date_text = build_date_text(start_date, end_date, use_present_for_missing_end=use_present_for_missing_end)
+    paragraph.text = date_text
+
+
+def clone_repeating_block(document, anchor_placeholder, selected_clusters, use_present_for_missing_end=False):
     anchor_index = find_paragraph_index_with_placeholder(document, anchor_placeholder)
     if anchor_index is None:
         return False
@@ -1302,62 +1332,83 @@ def clone_repeating_block(document, anchor_placeholder, selected_clusters):
     if anchor_index + 3 >= len(paragraphs):
         return False
 
-    title_paragraph = paragraphs[anchor_index + 1]
-    date_paragraph = paragraphs[anchor_index + 2]
+    title_template_paragraph = paragraphs[anchor_index + 1]
+    date_template_paragraph = paragraphs[anchor_index + 2]
     bullet_template_paragraph = paragraphs[anchor_index + 3]
 
     if not selected_clusters:
-        anchor_paragraph.text = ""
-        title_paragraph.text = ""
-        date_paragraph.text = ""
+        anchor_paragraph.text = format_section_label(anchor_placeholder)
+        title_template_paragraph.text = ""
+        date_template_paragraph.text = ""
         bullet_template_paragraph.text = ""
         return True
 
-    current_anchor = anchor_paragraph
+    replace_placeholder_in_paragraph(
+        anchor_paragraph,
+        anchor_placeholder,
+        format_section_label(anchor_placeholder),
+    )
+
+    current_anchor = date_template_paragraph
     first_entry = True
 
     for cluster in selected_clusters:
         if first_entry:
-            block_title_paragraph = title_paragraph
-            block_date_paragraph = date_paragraph
+            block_title_paragraph = title_template_paragraph
+            block_date_paragraph = date_template_paragraph
             first_bullet_paragraph = bullet_template_paragraph
             first_entry = False
         else:
-            block_title_paragraph = insert_paragraph_after(current_anchor)
-            block_title_paragraph._element.getprevious().addnext(copy.deepcopy(title_paragraph._element))
-            block_title_paragraph = document.paragraphs[document.paragraphs.index(block_title_paragraph)]
-            block_date_paragraph = insert_paragraph_after(block_title_paragraph)
-            block_date_paragraph._element.getprevious().addnext(copy.deepcopy(date_paragraph._element))
-            block_date_paragraph = document.paragraphs[document.paragraphs.index(block_date_paragraph)]
-            first_bullet_paragraph = insert_paragraph_after(block_date_paragraph)
-            first_bullet_paragraph._element.getprevious().addnext(copy.deepcopy(bullet_template_paragraph._element))
-            first_bullet_paragraph = document.paragraphs[document.paragraphs.index(first_bullet_paragraph)]
+            cloned_title = copy.deepcopy(title_template_paragraph._element)
+            current_anchor._element.addnext(cloned_title)
+            block_title_paragraph = document.paragraphs[document.paragraphs.index(current_anchor) + 1]
 
-        replace_placeholder_in_paragraph(current_anchor, anchor_placeholder, "")
-        replace_placeholder_in_paragraph(block_title_paragraph, "[[TITLE]]", cluster["title"])
+            cloned_date = copy.deepcopy(date_template_paragraph._element)
+            block_title_paragraph._element.addnext(cloned_date)
+            block_date_paragraph = document.paragraphs[document.paragraphs.index(block_title_paragraph) + 1]
 
-        start_date = cluster.get("start_date") or ""
-        end_date = cluster.get("end_date") or ""
-        date_text = f"{start_date} - {end_date}".strip(" -")
-        replace_placeholder_in_paragraph(block_date_paragraph, "[[START DATE]]", start_date)
-        replace_placeholder_in_paragraph(block_date_paragraph, "[[END DATE]]", end_date)
-        if block_date_paragraph.text.strip() == "[[START DATE]] - [[END DATE]]":
-            block_date_paragraph.text = date_text
+            cloned_bullet = copy.deepcopy(bullet_template_paragraph._element)
+            block_date_paragraph._element.addnext(cloned_bullet)
+            first_bullet_paragraph = document.paragraphs[document.paragraphs.index(block_date_paragraph) + 1]
+
+        replace_placeholder_in_paragraph(block_title_paragraph, "[[TITLE]]", cluster.get("title") or "")
+        replace_placeholder_in_paragraph(
+            block_title_paragraph,
+            "[[COMPANY]]",
+            cluster.get("secondary_title") or "",
+        )
+
+        apply_date_placeholder_paragraph(
+            block_date_paragraph,
+            cluster.get("start_date"),
+            cluster.get("end_date"),
+            use_present_for_missing_end=use_present_for_missing_end,
+        )
 
         bullet_points = cluster.get("bullet_points", [])
         if bullet_points:
-            first_bullet_paragraph.text = bullet_points[0]["text"]
+            replace_placeholder_in_paragraph(
+                first_bullet_paragraph,
+                "[[BULLET]]",
+                bullet_points[0]["text"],
+            )
             current_bullet_paragraph = first_bullet_paragraph
             for bullet_point in bullet_points[1:]:
-                new_bullet_paragraph = insert_paragraph_after(current_bullet_paragraph)
-                new_bullet_paragraph._element.getprevious().addnext(copy.deepcopy(bullet_template_paragraph._element))
-                new_bullet_paragraph = document.paragraphs[document.paragraphs.index(new_bullet_paragraph)]
-                new_bullet_paragraph.text = bullet_point["text"]
-                current_bullet_paragraph = new_bullet_paragraph
-            current_anchor = current_bullet_paragraph
+                cloned_bullet = copy.deepcopy(bullet_template_paragraph._element)
+                current_bullet_paragraph._element.addnext(cloned_bullet)
+                current_bullet_paragraph = document.paragraphs[
+                    document.paragraphs.index(current_bullet_paragraph) + 1
+                ]
+                replace_placeholder_in_paragraph(
+                    current_bullet_paragraph,
+                    "[[BULLET]]",
+                    bullet_point["text"],
+                )
         else:
-            first_bullet_paragraph.text = ""
-            current_anchor = first_bullet_paragraph
+            replace_placeholder_in_paragraph(first_bullet_paragraph, "[[BULLET]]", "")
+            current_bullet_paragraph = first_bullet_paragraph
+
+        current_anchor = current_bullet_paragraph
 
     return True
 
@@ -1373,23 +1424,45 @@ def generate_tailored_resume_docx(
     document = Document(template_path)
     latest_const_data = get_latest_const_data()
 
-    const_data_map = {
+    scalar_data_map = {
         "[[NAME]]": latest_const_data[1] if latest_const_data else "",
-        "[[LINKEDIN_URL]]": latest_const_data[2] if latest_const_data else "",
-        "[[GITHUB_URL]]": latest_const_data[3] if latest_const_data else "",
-        "[[PHONE_NUMBER]]": latest_const_data[4] if latest_const_data else "",
-        "[[LOCATION]]": latest_const_data[5] if latest_const_data else "",
-        "[[CERTIFICATIONS]]": latest_const_data[6] if latest_const_data else "",
-        "[[EDUCATIONS]]": latest_const_data[7] if latest_const_data else "",
-        "[[SUMMARY]]": selected_summary["text"] if selected_summary else "",
-        "[[SKILLS]]": selected_skill["text"] if selected_skill else "",
+        "[[EMAIL]]": latest_const_data[2] if latest_const_data else "",
+        "[[LINKEDIN_URL]]": latest_const_data[3] if latest_const_data else "",
+        "[[GITHUB_URL]]": latest_const_data[4] if latest_const_data else "",
+        "[[PHONE_NUMBER]]": latest_const_data[5] if latest_const_data else "",
+        "[[LOCATION]]": latest_const_data[6] if latest_const_data else "",
     }
 
-    for placeholder, replacement_text in const_data_map.items():
-        replace_placeholder_in_document(document, placeholder, replacement_text or "")
+    section_data_map = {
+        "[[SUMMARY]]": selected_summary["text"] if selected_summary else "",
+        "[[SKILLS]]": selected_skill["text"] if selected_skill else "",
+        "[[CERTIFICATIONS]]": latest_const_data[7] if latest_const_data else "",
+        "[[EDUCATION]]": latest_const_data[8] if latest_const_data else "",
+        "[[EDUCATIONS]]": latest_const_data[8] if latest_const_data else "",
+    }
 
-    clone_repeating_block(document, "[[WORK_EXPERIENCE]]", selected_work_clusters)
-    clone_repeating_block(document, "[[PROJECTS]]", selected_project_clusters)
+    for placeholder, replacement_text in scalar_data_map.items():
+        replace_placeholder_everywhere(document, placeholder, replacement_text or "")
+
+    for placeholder, replacement_text in section_data_map.items():
+        replace_placeholder_everywhere(
+            document,
+            placeholder,
+            f"{format_section_label(placeholder)}\n{replacement_text or ''}".rstrip(),
+        )
+
+    clone_repeating_block(
+        document,
+        "[[EXPERIENCE]]",
+        selected_work_clusters,
+        use_present_for_missing_end=True,
+    )
+    clone_repeating_block(
+        document,
+        "[[PROJECTS]]",
+        selected_project_clusters,
+        use_present_for_missing_end=True,
+    )
 
     document.save(output_path)
 

@@ -36,6 +36,7 @@ def on_startup():
         CREATE TABLE IF NOT EXISTS const_data (
             const_data_id INTEGER PRIMARY KEY,
             name TEXT,
+            email TEXT,
             linkedin_url TEXT,
             github_url TEXT,
             phone_number TEXT,
@@ -103,6 +104,11 @@ def on_startup():
         )
         """
     )
+    cursor.execute("PRAGMA table_info(const_data)")
+    const_data_columns = {row[1] for row in cursor.fetchall()}
+    if "email" not in const_data_columns:
+        cursor.execute("ALTER TABLE const_data ADD COLUMN email TEXT")
+
     conn.commit()
     conn.close()
 
@@ -139,6 +145,7 @@ def insert_resume(resume_id, name):
 
 def insert_const_data(
     name,
+    email=None,
     linkedin_url=None,
     github_url=None,
     phone_number=None,
@@ -152,6 +159,7 @@ def insert_const_data(
         """
         INSERT INTO const_data (
             name,
+            email,
             linkedin_url,
             github_url,
             phone_number,
@@ -159,10 +167,11 @@ def insert_const_data(
             certifications,
             educations
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             name,
+            email,
             linkedin_url,
             github_url,
             phone_number,
@@ -183,6 +192,7 @@ def get_latest_const_data():
         SELECT
             const_data_id,
             name,
+            email,
             linkedin_url,
             github_url,
             phone_number,

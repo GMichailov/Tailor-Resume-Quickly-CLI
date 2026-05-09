@@ -113,6 +113,13 @@ def update_personal_information():
         """,
         "Name is required.",
     )
+    email = normalize_optional_text(
+        input(
+            """
+            Enter your email (optional):
+            """
+        )
+    )
     linkedin_url = normalize_optional_text(
         input(
             """
@@ -158,6 +165,7 @@ def update_personal_information():
 
     insert_const_data(
         name=name,
+        email=email,
         linkedin_url=linkedin_url,
         github_url=github_url,
         phone_number=phone_number,
