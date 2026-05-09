@@ -18,6 +18,8 @@ from storage import (
     list_summary_entries,
 )
 
+from tailor import tailor_resume
+
 
 def select_primary_action():
     goal = input(
@@ -91,6 +93,25 @@ def upload_resume_file():
     print(f'Resume "{resume_title}" saved as {destination_path.name}.\n')
 
 
+def ensure_long_input_file_exists():
+    Path("long_input.txt").touch(exist_ok=True)
+
+
+def read_long_input_text(required=False, empty_error_text="long_input.txt is empty."):
+    ensure_long_input_file_exists()
+    raw_text = Path("long_input.txt").read_text(encoding="utf-8").strip()
+    if not raw_text:
+        if required:
+            print(f"{empty_error_text}\n")
+        return None
+    return raw_text
+
+
+def prompt_long_input_text(prompt_text, required=False, empty_error_text="long_input.txt is empty."):
+    input(prompt_text)
+    return read_long_input_text(required=required, empty_error_text=empty_error_text)
+
+
 def normalize_optional_text(value):
     cleaned_value = value.strip()
     if not cleaned_value:
@@ -148,19 +169,15 @@ def update_personal_information():
             """
         )
     )
-    certifications = normalize_optional_text(
-        input(
-            """
-            Paste raw text for certifications (optional):
-            """
-        )
+    certifications = prompt_long_input_text(
+        """
+        Paste certifications into long_input.txt, then press Enter (optional):
+        """
     )
-    educations = normalize_optional_text(
-        input(
-            """
-            Paste raw text for educations (optional):
-            """
-        )
+    educations = prompt_long_input_text(
+        """
+        Paste educations into long_input.txt, then press Enter (optional):
+        """
     )
 
     insert_const_data(
@@ -436,6 +453,8 @@ def add_custom_information():
 
 
 def run_cli():
+    ensure_long_input_file_exists()
+
     while True:
         primary_action = select_primary_action()
         if primary_action == 0:
@@ -448,8 +467,7 @@ def run_cli():
         elif primary_action == 3:
             add_custom_information()
         elif primary_action == 4:
-            #tailor_resume()
-            pass
+            tailor_resume()
 
 
 if __name__ == "__main__":

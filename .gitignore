@@ -2,3 +2,5 @@
 __pycache__
 data.sql
 files/
+*.docx
+long_input.txt

@@ -30,14 +30,20 @@ MODEL="nvidia/nemotron-3-super-120b-a12b:free"
 
 
 def get_job_description_input():
-    job_description = input(
+    input(
         """
-        Paste the full job description below:
+        Paste the full job description into long_input.txt, then press Enter:
         """
-    ).strip()
+    )
+
+    input_path = Path("long_input.txt")
+    if not input_path.exists():
+        raise ValueError("long_input.txt could not be found.")
+
+    job_description = input_path.read_text(encoding="utf-8").strip()
 
     if not job_description:
-        raise ValueError("Job description cannot be empty.")
+        raise ValueError("long_input.txt is empty.")
 
     return job_description
 
@@ -820,6 +826,12 @@ def save_modified_text_entry(insert_function, entry_type_label, text_value):
 
 def edit_selected_summary(ats_keywords, job_description, selected_summary):
     while True:
+        print("\nCurrent summary text:")
+        if selected_summary is None:
+            print("No summary selected.\n")
+        else:
+            print(f"{selected_summary.get('text', '')}\n")
+
         selection = input(
             """
             Edit summary
@@ -870,6 +882,12 @@ def edit_selected_summary(ats_keywords, job_description, selected_summary):
 
 def edit_selected_skill(ats_keywords, job_description, selected_skill):
     while True:
+        print("\nCurrent skills text:")
+        if selected_skill is None:
+            print("No skills selected.\n")
+        else:
+            print(f"{selected_skill.get('text', '')}\n")
+
         selection = input(
             """
             Edit skills
@@ -976,8 +994,22 @@ def build_selected_cluster_objects(selected_clusters, entry_type):
 def edit_selected_cluster_bullets(selected_cluster):
     while True:
         print(f"\nEditing bullets for {selected_cluster['title']} / {selected_cluster['cluster_description'] or selected_cluster['cluster_id']}:")
-        for index, bullet_point in enumerate(selected_cluster["bullet_points"], start=1):
-            print(f"{index}. {bullet_point['text']}")
+        if selected_cluster.get("secondary_title"):
+            print(f"Secondary title: {selected_cluster['secondary_title']}")
+        if selected_cluster.get("start_date") or selected_cluster.get("end_date"):
+            print(
+                "Dates: "
+                f"{selected_cluster.get('start_date') or ''}"
+                f"{' - ' if selected_cluster.get('start_date') or selected_cluster.get('end_date') else ''}"
+                f"{selected_cluster.get('end_date') or ''}"
+            )
+
+        if not selected_cluster["bullet_points"]:
+            print("No current bullet points.")
+        else:
+            print("Current bullet points:")
+            for index, bullet_point in enumerate(selected_cluster["bullet_points"], start=1):
+                print(f"{index}. {bullet_point['text']}")
 
         selection = input(
             """
@@ -1094,6 +1126,25 @@ def edit_selected_clusters(selected_clusters, entry_type_label):
         else:
             for index, cluster in enumerate(selected_clusters, start=1):
                 print(f"{index}. {cluster['title']}")
+                if cluster.get("secondary_title"):
+                    print(f"   Secondary title: {cluster['secondary_title']}")
+                if cluster.get("start_date") or cluster.get("end_date"):
+                    print(
+                        "   Dates: "
+                        f"{cluster.get('start_date') or ''}"
+                        f"{' - ' if cluster.get('start_date') or cluster.get('end_date') else ''}"
+                        f"{cluster.get('end_date') or ''}"
+                    )
+                if cluster.get("cluster_description"):
+                    print(f"   Group: {cluster['cluster_description']}")
+                bullet_points = cluster.get("bullet_points", [])
+                if not bullet_points:
+                    print("   Bullets: none")
+                else:
+                    print("   Bullets:")
+                    for bullet_index, bullet_point in enumerate(bullet_points, start=1):
+                        print(f"     {bullet_index}. {bullet_point['text']}")
+                print()
 
         selection = input(
             f"""
@@ -1321,27 +1372,30 @@ def apply_date_placeholder_paragraph(paragraph, start_date, end_date, use_presen
     paragraph.text = date_text
 
 
+def paragraph_from_element(parent, element):
+    for paragraph in parent.paragraphs:
+        if paragraph._element is element:
+            return paragraph
+    return None
+
+
 def clone_repeating_block(document, anchor_placeholder, selected_clusters, use_present_for_missing_end=False):
     anchor_index = find_paragraph_index_with_placeholder(document, anchor_placeholder)
     if anchor_index is None:
         return False
 
     paragraphs = document.paragraphs
-    anchor_paragraph = paragraphs[anchor_index]
-
     if anchor_index + 3 >= len(paragraphs):
         return False
 
+    anchor_paragraph = paragraphs[anchor_index]
     title_template_paragraph = paragraphs[anchor_index + 1]
     date_template_paragraph = paragraphs[anchor_index + 2]
     bullet_template_paragraph = paragraphs[anchor_index + 3]
 
-    if not selected_clusters:
-        anchor_paragraph.text = format_section_label(anchor_placeholder)
-        title_template_paragraph.text = ""
-        date_template_paragraph.text = ""
-        bullet_template_paragraph.text = ""
-        return True
+    title_template_element = copy.deepcopy(title_template_paragraph._element)
+    date_template_element = copy.deepcopy(date_template_paragraph._element)
+    bullet_template_element = copy.deepcopy(bullet_template_paragraph._element)
 
     replace_placeholder_in_paragraph(
         anchor_paragraph,
@@ -1349,66 +1403,56 @@ def clone_repeating_block(document, anchor_placeholder, selected_clusters, use_p
         format_section_label(anchor_placeholder),
     )
 
-    current_anchor = date_template_paragraph
-    first_entry = True
+    template_parent = title_template_paragraph._element.getparent()
+    template_parent.remove(title_template_paragraph._element)
+    template_parent.remove(date_template_paragraph._element)
+    template_parent.remove(bullet_template_paragraph._element)
+
+    insertion_point = anchor_paragraph._element
+
+    if not selected_clusters:
+        return True
 
     for cluster in selected_clusters:
-        if first_entry:
-            block_title_paragraph = title_template_paragraph
-            block_date_paragraph = date_template_paragraph
-            first_bullet_paragraph = bullet_template_paragraph
-            first_entry = False
-        else:
-            cloned_title = copy.deepcopy(title_template_paragraph._element)
-            current_anchor._element.addnext(cloned_title)
-            block_title_paragraph = document.paragraphs[document.paragraphs.index(current_anchor) + 1]
+        new_title_element = copy.deepcopy(title_template_element)
+        insertion_point.addnext(new_title_element)
+        insertion_point = new_title_element
 
-            cloned_date = copy.deepcopy(date_template_paragraph._element)
-            block_title_paragraph._element.addnext(cloned_date)
-            block_date_paragraph = document.paragraphs[document.paragraphs.index(block_title_paragraph) + 1]
-
-            cloned_bullet = copy.deepcopy(bullet_template_paragraph._element)
-            block_date_paragraph._element.addnext(cloned_bullet)
-            first_bullet_paragraph = document.paragraphs[document.paragraphs.index(block_date_paragraph) + 1]
-
-        replace_placeholder_in_paragraph(block_title_paragraph, "[[TITLE]]", cluster.get("title") or "")
-        replace_placeholder_in_paragraph(
-            block_title_paragraph,
-            "[[COMPANY]]",
-            cluster.get("secondary_title") or "",
-        )
-
-        apply_date_placeholder_paragraph(
-            block_date_paragraph,
-            cluster.get("start_date"),
-            cluster.get("end_date"),
-            use_present_for_missing_end=use_present_for_missing_end,
-        )
-
-        bullet_points = cluster.get("bullet_points", [])
-        if bullet_points:
+        title_paragraph = paragraph_from_element(document, new_title_element)
+        if title_paragraph is not None:
+            replace_placeholder_in_paragraph(title_paragraph, "[[TITLE]]", cluster.get("title") or "")
             replace_placeholder_in_paragraph(
-                first_bullet_paragraph,
-                "[[BULLET]]",
-                bullet_points[0]["text"],
+                title_paragraph,
+                "[[COMPANY]]",
+                cluster.get("secondary_title") or "",
             )
-            current_bullet_paragraph = first_bullet_paragraph
-            for bullet_point in bullet_points[1:]:
-                cloned_bullet = copy.deepcopy(bullet_template_paragraph._element)
-                current_bullet_paragraph._element.addnext(cloned_bullet)
-                current_bullet_paragraph = document.paragraphs[
-                    document.paragraphs.index(current_bullet_paragraph) + 1
-                ]
-                replace_placeholder_in_paragraph(
-                    current_bullet_paragraph,
-                    "[[BULLET]]",
-                    bullet_point["text"],
-                )
-        else:
-            replace_placeholder_in_paragraph(first_bullet_paragraph, "[[BULLET]]", "")
-            current_bullet_paragraph = first_bullet_paragraph
 
-        current_anchor = current_bullet_paragraph
+        new_date_element = copy.deepcopy(date_template_element)
+        insertion_point.addnext(new_date_element)
+        insertion_point = new_date_element
+
+        date_paragraph = paragraph_from_element(document, new_date_element)
+        if date_paragraph is not None:
+            apply_date_placeholder_paragraph(
+                date_paragraph,
+                cluster.get("start_date"),
+                cluster.get("end_date"),
+                use_present_for_missing_end=use_present_for_missing_end,
+            )
+
+        bullet_points = cluster.get("bullet_points", []) or [{"text": ""}]
+        for bullet_point in bullet_points:
+            new_bullet_element = copy.deepcopy(bullet_template_element)
+            insertion_point.addnext(new_bullet_element)
+            insertion_point = new_bullet_element
+
+            bullet_paragraph = paragraph_from_element(document, new_bullet_element)
+            if bullet_paragraph is not None:
+                replace_placeholder_in_paragraph(
+                    bullet_paragraph,
+                    "[[BULLET]]",
+                    bullet_point.get("text", ""),
+                )
 
     return True
 
@@ -1441,16 +1485,6 @@ def generate_tailored_resume_docx(
         "[[EDUCATIONS]]": latest_const_data[8] if latest_const_data else "",
     }
 
-    for placeholder, replacement_text in scalar_data_map.items():
-        replace_placeholder_everywhere(document, placeholder, replacement_text or "")
-
-    for placeholder, replacement_text in section_data_map.items():
-        replace_placeholder_everywhere(
-            document,
-            placeholder,
-            f"{format_section_label(placeholder)}\n{replacement_text or ''}".rstrip(),
-        )
-
     clone_repeating_block(
         document,
         "[[EXPERIENCE]]",
@@ -1463,6 +1497,16 @@ def generate_tailored_resume_docx(
         selected_project_clusters,
         use_present_for_missing_end=True,
     )
+
+    for placeholder, replacement_text in scalar_data_map.items():
+        replace_placeholder_everywhere(document, placeholder, replacement_text or "")
+
+    for placeholder, replacement_text in section_data_map.items():
+        replace_placeholder_everywhere(
+            document,
+            placeholder,
+            f"{format_section_label(placeholder)}\n{replacement_text or ''}".rstrip(),
+        )
 
     document.save(output_path)
 
